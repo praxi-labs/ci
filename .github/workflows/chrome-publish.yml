@@ -93,8 +93,13 @@ jobs:
         id: zip
         run: |
           set -euo pipefail
-          path="$(ls -1 ./*.zip | head -n 1)"
-          echo "path=$path" >> "$GITHUB_OUTPUT"
+          shopt -s nullglob
+          zips=(./*.zip)
+          if [ "${#zips[@]}" -eq 0 ]; then
+            echo "::error::${{ inputs.package-script }} produced no zip"
+            exit 1
+          fi
+          echo "path=${zips[0]}" >> "$GITHUB_OUTPUT"
 
       - name: Upload the zip as a build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
