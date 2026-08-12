@@ -1,0 +1,158 @@
+name: Chrome publish
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node version used to build the extension.
+        type: string
+        default: '22'
+      working-directory:
+        description: Directory holding package.json.
+        type: string
+        default: '.'
+      package-script:
+        description: npm script that produces the store zip.
+        type: string
+        default: package
+      publish-target:
+        description: >-
+          draft leaves the upload unpublished in the dashboard for a human to
+          submit. default publishes to everyone. trustedTesters publishes to
+          the tester group.
+        type: string
+        default: draft
+      environment:
+        description: >-
+          Deployment environment guarding the upload. Attach a required
+          reviewer to it so a release cannot be shipped without approval.
+        type: string
+        default: release
+      timeout-minutes:
+        type: number
+        default: 20
+    secrets:
+      CHROME_EXTENSION_ID:
+        required: false
+      CHROME_CLIENT_ID:
+        required: false
+      CHROME_CLIENT_SECRET:
+        required: false
+      CHROME_REFRESH_TOKEN:
+        required: false
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Publish to the Chrome Web Store
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck --if-present
+
+      - name: Test
+        run: npm test
+
+      - name: Refuse to ship when the tag and the manifest disagree
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          manifest="$(node -p "require('./public/manifest.json').version")"
+          if [ "$tag" != "$pkg" ] || [ "$pkg" != "$manifest" ]; then
+            echo "::error::tag $GITHUB_REF_NAME, package.json $pkg and manifest $manifest must all agree"
+            exit 1
+          fi
+
+      - name: Build the store zip
+        run: npm run ${{ inputs.package-script }}
+
+      - name: Find the zip
+        id: zip
+        run: |
+          set -euo pipefail
+          path="$(ls -1 ./*.zip | head -n 1)"
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the zip as a build artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chrome-extension
+          path: ${{ inputs.working-directory }}/*.zip
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload to the Chrome Web Store
+        env:
+          EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+          CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+          ZIP_PATH: ${{ steps.zip.outputs.path }}
+          PUBLISH_TARGET: ${{ inputs.publish-target }}
+        run: |
+          set -euo pipefail
+          if [ -z "${EXTENSION_ID:-}" ] || [ -z "${CLIENT_ID:-}" ] || [ -z "${REFRESH_TOKEN:-}" ]; then
+            echo "Chrome Web Store credentials are not set, so the zip was built and attached but not uploaded"
+            exit 0
+          fi
+
+          token="$(curl --fail --silent --show-error \
+            --retry 3 --retry-all-errors \
+            -d "client_id=${CLIENT_ID}" \
+            -d "client_secret=${CLIENT_SECRET}" \
+            -d "refresh_token=${REFRESH_TOKEN}" \
+            -d "grant_type=refresh_token" \
+            https://oauth2.googleapis.com/token | node -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).access_token')"
+
+          if [ -z "$token" ] || [ "$token" = "undefined" ]; then
+            echo "::error::could not exchange the refresh token for an access token"
+            exit 1
+          fi
+
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${token}" \
+            -H "x-goog-api-version: 2" \
+            -X PUT -T "${ZIP_PATH}" \
+            "https://www.googleapis.com/upload/chromewebstore/v1.1/items/${EXTENSION_ID}"
+
+          if [ "${PUBLISH_TARGET}" = "draft" ]; then
+            echo "uploaded as a draft; submit it from the developer dashboard"
+            exit 0
+          fi
+
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${token}" \
+            -H "x-goog-api-version: 2" \
+            -H "Content-Length: 0" \
+            -X POST \
+            "https://www.googleapis.com/chromewebstore/v1.1/items/${EXTENSION_ID}/publish?publishTarget=${PUBLISH_TARGET}"
+
+      - name: Attach the zip to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ZIP_PATH: ${{ steps.zip.outputs.path }}
+        run: gh release upload "${GITHUB_REF_NAME}" "${ZIP_PATH}" --clobber

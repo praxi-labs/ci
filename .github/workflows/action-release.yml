@@ -1,0 +1,104 @@
+name: Action release
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node version used to rebuild the committed bundle.
+        type: string
+        default: '22'
+      build-script:
+        description: npm script that regenerates the committed bundle.
+        type: string
+        default: package
+      sibling-package:
+        description: >-
+          A praxi-labs repository this action depends on through a relative
+          file: path. CI clones and builds it next to the checkout so the
+          lockfile link resolves.
+        type: string
+        default: ''
+      timeout-minutes:
+        type: number
+        default: 15
+
+permissions: {}
+
+jobs:
+  release:
+    name: Tag and release
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Build the sibling dependency
+        if: inputs.sibling-package != ''
+        working-directory: ${{ github.workspace }}/..
+        run: |
+          set -euo pipefail
+          rm -rf "${{ inputs.sibling-package }}"
+          git clone --depth 1 "https://github.com/praxi-labs/${{ inputs.sibling-package }}.git" "${{ inputs.sibling-package }}"
+          cd "${{ inputs.sibling-package }}"
+          npm ci --ignore-scripts
+          npm run build --if-present
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Refuse to release when the tag and the manifest disagree
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $pkg"
+            exit 1
+          fi
+
+      - name: Refuse to release a stale bundle
+        run: |
+          set -euo pipefail
+          npm run ${{ inputs.build-script }}
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::rebuilding changed tracked files, so the committed bundle is stale"
+            git status --porcelain
+            exit 1
+          fi
+
+      - name: Move the major version alias
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          major="${GITHUB_REF_NAME%%.*}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa "$major" -m "$major points at ${GITHUB_REF_NAME}"
+          git push --force origin "$major"
+          echo "moved $major to ${GITHUB_REF_NAME}"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release edit "${GITHUB_REF_NAME}" --draft=false
+          else
+            gh release create "${GITHUB_REF_NAME}" --generate-notes --title "${GITHUB_REF_NAME}"
+          fi

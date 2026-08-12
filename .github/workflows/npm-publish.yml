@@ -13,6 +13,14 @@ on:
         description: npm dist-tag to publish under.
         type: string
         default: latest
+      sibling-package:
+        description: >-
+          A praxi-labs repository this package depends on through a relative
+          file: path. CI clones and builds it next to the checkout so the
+          lockfile link resolves. Only valid for a development dependency,
+          because a published package cannot carry a local path at runtime.
+        type: string
+        default: ''
       environment:
         description: >-
           Deployment environment guarding the publish. Attach a required
@@ -51,6 +59,38 @@ jobs:
 
       - name: Use an npm that supports trusted publishing
         run: npm install --global npm@latest
+
+      - name: Build the sibling dependency
+        if: inputs.sibling-package != ''
+        working-directory: ${{ github.workspace }}/..
+        run: |
+          set -euo pipefail
+          rm -rf "${{ inputs.sibling-package }}"
+          git clone --depth 1 "https://github.com/praxi-labs/${{ inputs.sibling-package }}.git" "${{ inputs.sibling-package }}"
+          cd "${{ inputs.sibling-package }}"
+          npm ci --ignore-scripts
+          npm run build --if-present
+
+      - name: Refuse to publish a local path as a runtime dependency
+        run: |
+          set -euo pipefail
+          offenders="$(node -e '
+            const pkg = require("./package.json");
+            const bad = [];
+            for (const section of ["dependencies", "peerDependencies", "optionalDependencies"]) {
+              for (const [name, spec] of Object.entries(pkg[section] || {})) {
+                if (/^(file:|link:|\.{1,2}\/)/.test(String(spec))) {
+                  bad.push(section + ": " + name + " -> " + spec);
+                }
+              }
+            }
+            process.stdout.write(bad.join("\n"));
+          ')"
+          if [ -n "$offenders" ]; then
+            echo "::error::These resolve to a path on the build machine, so every consumer would fail to install:"
+            echo "$offenders"
+            exit 1
+          fi
 
       - name: Install
         run: npm ci
