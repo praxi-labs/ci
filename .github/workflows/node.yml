@@ -30,6 +30,14 @@ on:
         description: Upload the packed tarball as a build artifact.
         type: boolean
         default: true
+      link-workspace-package:
+        description: >-
+          A praxi-labs repository to clone, build and npm link before install.
+          For a package that depends on a sibling not yet on the registry, so
+          CI builds the real dependency from source rather than skipping the
+          check. Remove once the dependency is published.
+        type: string
+        default: ''
       committed-build-script:
         description: >-
           npm script that regenerates a build output committed to the
@@ -71,8 +79,23 @@ jobs:
           cache: npm
           cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
 
+      - name: Build and link the workspace dependency
+        if: inputs.link-workspace-package != ''
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://github.com/praxi-labs/${{ inputs.link-workspace-package }}.git" linked
+          cd linked
+          npm ci --ignore-scripts
+          npm run build --if-present
+          npm link
+
       - name: Install
-        run: npm ci ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
+        run: |
+          npm ci ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
+          if [ -n "${{ inputs.link-workspace-package }}" ]; then
+            npm link @phylax/sdk
+          fi
 
       - name: Lint
         run: npm run lint --if-present
@@ -106,8 +129,23 @@ jobs:
           cache: npm
           cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
 
+      - name: Build and link the workspace dependency
+        if: inputs.link-workspace-package != ''
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://github.com/praxi-labs/${{ inputs.link-workspace-package }}.git" linked
+          cd linked
+          npm ci --ignore-scripts
+          npm run build --if-present
+          npm link
+
       - name: Install
-        run: npm ci ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
+        run: |
+          npm ci ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
+          if [ -n "${{ inputs.link-workspace-package }}" ]; then
+            npm link @phylax/sdk
+          fi
 
       - name: Build
         run: npm run build --if-present
@@ -148,8 +186,23 @@ jobs:
           cache: npm
           cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
 
+      - name: Build and link the workspace dependency
+        if: inputs.link-workspace-package != ''
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://github.com/praxi-labs/${{ inputs.link-workspace-package }}.git" linked
+          cd linked
+          npm ci --ignore-scripts
+          npm run build --if-present
+          npm link
+
       - name: Install
-        run: npm ci ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
+        run: |
+          npm ci ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
+          if [ -n "${{ inputs.link-workspace-package }}" ]; then
+            npm link @phylax/sdk
+          fi
 
       - name: Rebuild
         run: npm run ${{ inputs.committed-build-script }}
