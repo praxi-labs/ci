@@ -1,0 +1,164 @@
+name: Node
+
+on:
+  workflow_call:
+    inputs:
+      node-versions:
+        description: JSON array of Node major versions to test against.
+        type: string
+        default: '["20", "22", "24"]'
+      runners:
+        description: JSON array of runner labels to test on.
+        type: string
+        default: '["ubuntu-latest"]'
+      working-directory:
+        description: Directory holding package.json.
+        type: string
+        default: '.'
+      primary-node-version:
+        description: Version used for the single-run packaging job.
+        type: string
+        default: '22'
+      ignore-scripts:
+        description: >-
+          Install with --ignore-scripts. Blocks dependency lifecycle hooks,
+          which is the safer default for packages that do not need to compile
+          a native addon at install time.
+        type: boolean
+        default: false
+      upload-package:
+        description: Upload the packed tarball as a build artifact.
+        type: boolean
+        default: true
+      committed-build-script:
+        description: >-
+          npm script that regenerates a build output committed to the
+          repository, such as the bundle a JavaScript Action runs from.
+          When set, CI reruns it and fails if the result differs from what
+          is checked in. Leave empty for repositories that commit no build
+          output.
+        type: string
+        default: ''
+      timeout-minutes:
+        type: number
+        default: 15
+
+permissions: {}
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ${{ fromJSON(inputs.node-versions) }}
+        os: ${{ fromJSON(inputs.runners) }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install
+        run: npm ci ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Typecheck
+        run: npm run typecheck --if-present
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build --if-present
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.primary-node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install
+        run: npm ci ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
+
+      - name: Build
+        run: npm run build --if-present
+
+      - name: Pack
+        run: npm pack --pack-destination .
+
+      - name: List tarball contents
+        run: tar -tzf ./*.tgz | sort
+
+      - name: Upload tarball
+        if: inputs.upload-package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-package
+          path: ${{ inputs.working-directory }}/*.tgz
+          retention-days: 7
+          if-no-files-found: error
+
+  committed-build:
+    name: Committed build output is current
+    if: inputs.committed-build-script != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.primary-node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install
+        run: npm ci ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
+
+      - name: Rebuild
+        run: npm run ${{ inputs.committed-build-script }}
+
+      - name: Fail if the checked-in output differs
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Rebuilding changed tracked files, so the committed build output is stale. Run 'npm run ${{ inputs.committed-build-script }}' and commit the result."
+            git status --porcelain
+            git diff --stat
+            exit 1
+          fi

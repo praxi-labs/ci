@@ -1,0 +1,17 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Publish
+    uses: praxi-labs/ci/.github/workflows/pypi-publish.yml@v1
+    with:
+      version-path: phylax/version.py
+    permissions:
+      contents: read
+      id-token: write

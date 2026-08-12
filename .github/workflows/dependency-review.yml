@@ -1,0 +1,44 @@
+name: Dependency review
+
+on:
+  workflow_call:
+    inputs:
+      fail-on-severity:
+        description: Lowest severity that fails the check.
+        type: string
+        default: high
+      allow-licenses:
+        description: >-
+          Comma separated SPDX identifiers. A dependency under any other
+          license fails the check. Empty disables the license gate.
+        type: string
+        default: ''
+      comment-summary-in-pr:
+        description: Post the review summary as a pull request comment.
+        type: string
+        default: on-failure
+      timeout-minutes:
+        type: number
+        default: 10
+
+permissions: {}
+
+jobs:
+  review:
+    name: Review
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: ${{ inputs.fail-on-severity }}
+          allow-licenses: ${{ inputs.allow-licenses }}
+          comment-summary-in-pr: ${{ inputs.comment-summary-in-pr }}

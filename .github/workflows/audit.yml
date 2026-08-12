@@ -1,0 +1,75 @@
+name: Advisory audit
+
+on:
+  workflow_call:
+    inputs:
+      ecosystem:
+        description: npm or pypi.
+        type: string
+        required: true
+      working-directory:
+        type: string
+        default: '.'
+      audit-level:
+        description: Lowest npm severity that fails the run.
+        type: string
+        default: high
+      node-version:
+        type: string
+        default: '22'
+      python-version:
+        type: string
+        default: '3.12'
+      timeout-minutes:
+        type: number
+        default: 10
+
+permissions: {}
+
+jobs:
+  npm:
+    name: npm audit
+    if: inputs.ecosystem == 'npm'
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=${{ inputs.audit-level }}
+
+  pypi:
+    name: pip-audit
+    if: inputs.ecosystem == 'pypi'
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install
+        run: python -m pip install --upgrade pip pip-audit && python -m pip install .
+
+      - name: Audit installed dependencies
+        run: python -m pip_audit --strict --progress-spinner off

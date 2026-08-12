@@ -1,0 +1,90 @@
+name: PyPI publish
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        type: string
+        default: '.'
+      python-version:
+        type: string
+        default: '3.12'
+      version-path:
+        description: >-
+          File holding the package version, used to check the release tag
+          against what will be published.
+        type: string
+        default: ''
+      environment:
+        description: >-
+          Deployment environment guarding the publish. Attach a required
+          reviewer to it so a release cannot be cut without human approval.
+        type: string
+        default: release
+      repository-url:
+        description: Index to publish to. Point at TestPyPI for a dry run.
+        type: string
+        default: https://upload.pypi.org/legacy/
+      timeout-minutes:
+        type: number
+        default: 20
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip build twine
+
+      - name: Build
+        run: python -m build
+
+      - name: Check metadata
+        run: python -m twine check --strict dist/*
+
+      - name: Refuse to publish a version that does not match the tag
+        if: inputs.version-path != ''
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          VERSION_PATH: ${{ inputs.version-path }}
+        run: |
+          set -euo pipefail
+          package_version="$(python -c "
+          import re, sys, pathlib
+          text = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')
+          match = re.search(r'''__version__\s*=\s*['\"]([^'\"]+)['\"]''', text)
+          if not match:
+              raise SystemExit('no __version__ assignment found')
+          print(match.group(1))
+          " "$VERSION_PATH")"
+          tag_version="${REF_NAME#v}"
+          if [ "$package_version" != "$tag_version" ]; then
+            echo "::error::Tag ${REF_NAME} does not match package version ${package_version}."
+            exit 1
+          fi
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: ${{ inputs.working-directory }}/dist
+          repository-url: ${{ inputs.repository-url }}
+          attestations: true

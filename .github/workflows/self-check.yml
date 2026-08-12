@@ -1,0 +1,44 @@
+name: Self check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions: {}
+
+jobs:
+  workflows:
+    name: Workflows
+    uses: ./.github/workflows/workflow-lint.yml
+    permissions:
+      contents: read
+      security-events: write
+
+  pins:
+    name: Action pins are commented
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Every pinned action carries a readable version
+        run: |
+          set -euo pipefail
+          undocumented=$(grep -rnE "uses: [^.].*@[0-9a-f]{40}$" .github/workflows || true)
+          if [ -n "$undocumented" ]; then
+            echo "::error::A pinned action is missing its trailing version comment."
+            echo "$undocumented"
+            exit 1
+          fi

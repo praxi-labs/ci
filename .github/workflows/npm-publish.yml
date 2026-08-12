@@ -1,0 +1,77 @@
+name: npm publish
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        type: string
+        default: '.'
+      node-version:
+        type: string
+        default: '24'
+      dist-tag:
+        description: npm dist-tag to publish under.
+        type: string
+        default: latest
+      environment:
+        description: >-
+          Deployment environment guarding the publish. Attach a required
+          reviewer to it so a release cannot be cut without human approval.
+        type: string
+        default: release
+      timeout-minutes:
+        type: number
+        default: 20
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Use an npm that supports trusted publishing
+        run: npm install --global npm@latest
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build --if-present
+
+      - name: Refuse to publish a version that does not match the tag
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "require('./package.json').version")"
+          tag_version="${REF_NAME#v}"
+          if [ "$package_version" != "$tag_version" ]; then
+            echo "::error::Tag ${REF_NAME} does not match package.json version ${package_version}."
+            exit 1
+          fi
+
+      - name: Publish
+        run: npm publish --provenance --access public --tag "${{ inputs.dist-tag }}"
