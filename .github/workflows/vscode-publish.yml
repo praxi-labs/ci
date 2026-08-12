@@ -1,0 +1,130 @@
+name: VS Code publish
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node version used to build and package the extension.
+        type: string
+        default: '22'
+      working-directory:
+        description: Directory holding package.json.
+        type: string
+        default: '.'
+      sibling-package:
+        description: >-
+          A praxi-labs repository this extension depends on through a relative
+          file: path. CI clones and builds it next to the checkout so the
+          lockfile link resolves. Remove once the dependency is published.
+        type: string
+        default: ''
+      pre-release:
+        description: Publish to the marketplace pre-release channel.
+        type: boolean
+        default: false
+      dry-run:
+        description: Build and validate the vsix without publishing it.
+        type: boolean
+        default: false
+      timeout-minutes:
+        type: number
+        default: 15
+    secrets:
+      VSCE_PAT:
+        description: Azure DevOps personal access token with Marketplace publish scope.
+        required: false
+      OVSX_TOKEN:
+        description: Open VSX access token. When absent, Open VSX is skipped.
+        required: false
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Build the sibling dependency
+        if: inputs.sibling-package != ''
+        working-directory: ${{ github.workspace }}/..
+        run: |
+          set -euo pipefail
+          rm -rf "${{ inputs.sibling-package }}"
+          git clone --depth 1 "https://github.com/praxi-labs/${{ inputs.sibling-package }}.git" "${{ inputs.sibling-package }}"
+          cd "${{ inputs.sibling-package }}"
+          npm ci --ignore-scripts
+          npm run build --if-present
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck --if-present
+
+      - name: Test
+        run: npm test
+
+      - name: Check the tag matches the manifest version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          manifest="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$manifest" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $manifest"
+            exit 1
+          fi
+
+      - name: Package
+        run: npx --yes @vscode/vsce@3 package ${{ inputs.pre-release && '--pre-release' || '' }} --out extension.vsix
+
+      - name: List vsix contents
+        run: npx --yes @vscode/vsce@3 ls-files || unzip -l extension.vsix
+
+      - name: Upload vsix
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vsix
+          path: ${{ inputs.working-directory }}/extension.vsix
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Publish to the Visual Studio Marketplace
+        if: ${{ !inputs.dry-run }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VSCE_PAT:-}" ]; then
+            echo "::error::VSCE_PAT is not set, so the extension cannot be published"
+            exit 1
+          fi
+          npx --yes @vscode/vsce@3 publish ${{ inputs.pre-release && '--pre-release' || '' }} --packagePath extension.vsix
+
+      - name: Publish to Open VSX
+        if: ${{ !inputs.dry-run }}
+        env:
+          OVSX_TOKEN: ${{ secrets.OVSX_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OVSX_TOKEN:-}" ]; then
+            echo "Open VSX token not set, skipping"
+            exit 0
+          fi
+          npx --yes ovsx@0.10 publish extension.vsix --pat "$OVSX_TOKEN"
