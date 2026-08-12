@@ -116,7 +116,7 @@ The license gate is off by default because a wrong list fails builds for reasons
 
 | Input | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `zizmor-persona` | string | `auto` | `auto`, `pedantic` or `regular`. |
+| `zizmor-persona` | string | `regular` | `regular`, `pedantic` or `auditor`. |
 | `timeout-minutes` | number | `10` | |
 
 Worth running in any repository with workflows of its own, not only this one.
