@@ -92,9 +92,11 @@ jobs:
 
       - name: Install
         run: |
-          npm ci ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
           if [ -n "${{ inputs.link-workspace-package }}" ]; then
+            npm install --no-audit --no-fund ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
             npm link @phylax/sdk
+          else
+            npm ci ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
           fi
 
       - name: Lint
@@ -142,9 +144,11 @@ jobs:
 
       - name: Install
         run: |
-          npm ci ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
           if [ -n "${{ inputs.link-workspace-package }}" ]; then
+            npm install --no-audit --no-fund ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
             npm link @phylax/sdk
+          else
+            npm ci ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
           fi
 
       - name: Build
@@ -199,9 +203,11 @@ jobs:
 
       - name: Install
         run: |
-          npm ci ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
           if [ -n "${{ inputs.link-workspace-package }}" ]; then
+            npm install --no-audit --no-fund ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
             npm link @phylax/sdk
+          else
+            npm ci ${{ inputs.ignore-scripts && '--ignore-scripts' || '' }}
           fi
 
       - name: Rebuild
