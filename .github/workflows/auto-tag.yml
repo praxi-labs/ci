@@ -1,0 +1,76 @@
+name: Auto tag
+
+on:
+  workflow_call:
+    inputs:
+      version-path:
+        description: >-
+          Where the version lives. A package.json, or a Python file holding
+          __version__. Defaults to package.json.
+        type: string
+        default: package.json
+      timeout-minutes:
+        type: number
+        default: 10
+
+permissions: {}
+
+jobs:
+  tag:
+    name: Tag a new version
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Read the declared version
+        id: version
+        env:
+          VERSION_PATH: ${{ inputs.version-path }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "$VERSION_PATH" ]; then
+            echo "::error::$VERSION_PATH does not exist"
+            exit 1
+          fi
+          case "$VERSION_PATH" in
+            *.json)
+              version="$(node -p "require('./$VERSION_PATH').version")"
+              ;;
+            *)
+              version="$(grep -oE '__version__[[:space:]]*=[[:space:]]*"[^"]+"' "$VERSION_PATH" | head -n 1 | grep -oE '"[^"]+"' | tr -d '"')"
+              ;;
+          esac
+          if [ -z "$version" ]; then
+            echo "::error::could not read a version from $VERSION_PATH"
+            exit 1
+          fi
+          if ! printf '%s' "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
+            echo "::error::$version is not a semantic version"
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "reading $VERSION_PATH gave $version"
+
+      - name: Tag it when the version is new
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "${tag} already exists, nothing to release"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${tag}" -m "${tag}"
+          git push origin "${tag}"
+          echo "pushed ${tag}, which starts the release workflow"
