@@ -11,6 +11,12 @@ on:
         description: Directory holding package.json.
         type: string
         default: '.'
+      release-tag:
+        description: >-
+          Tag to create the release under. Needed when this runs from a branch
+          after an auto tag, because github.ref is then the branch.
+        type: string
+        default: ''
       package-script:
         description: npm script that produces the store zip.
         type: string
@@ -75,10 +81,13 @@ jobs:
         run: npm test
 
       - name: Refuse to ship when the tag and the manifest disagree
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release-tag != ''
+        env:
+          RELEASE_TAG: ${{ inputs.release-tag }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME#v}"
+          ref="${RELEASE_TAG:-$GITHUB_REF_NAME}"
+          tag="${ref#v}"
           pkg="$(node -p "require('./package.json').version")"
           manifest="$(node -p "require('./public/manifest.json').version")"
           if [ "$tag" != "$pkg" ] || [ "$pkg" != "$manifest" ]; then
@@ -156,13 +165,15 @@ jobs:
             "https://www.googleapis.com/chromewebstore/v1.1/items/${EXTENSION_ID}/publish?publishTarget=${PUBLISH_TARGET}"
 
       - name: Attach the zip to the release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release-tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
           ZIP_PATH: ${{ steps.zip.outputs.path }}
+          RELEASE_TAG: ${{ inputs.release-tag }}
         run: |
           set -euo pipefail
-          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release create "${GITHUB_REF_NAME}" --generate-notes --title "${GITHUB_REF_NAME}"
+          tag="${RELEASE_TAG:-$GITHUB_REF_NAME}"
+          if ! gh release view "${tag}" >/dev/null 2>&1; then
+            gh release create "${tag}" --generate-notes --title "${tag}"
           fi
-          gh release upload "${GITHUB_REF_NAME}" "${ZIP_PATH}" --clobber
+          gh release upload "${tag}" "${ZIP_PATH}" --clobber
