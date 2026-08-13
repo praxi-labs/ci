@@ -102,6 +102,7 @@ jobs:
         run: npm run build --if-present
 
       - name: Refuse to publish a version that does not match the tag
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           REF_NAME: ${{ github.ref_name }}
         run: |

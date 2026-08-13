@@ -13,11 +13,22 @@ on:
         type: number
         default: 10
 
+    outputs:
+      tagged:
+        description: true when this run created a new tag
+        value: ${{ jobs.tag.outputs.tagged }}
+      version:
+        description: the version read from the source of truth
+        value: ${{ jobs.tag.outputs.version }}
+
 permissions: {}
 
 jobs:
   tag:
     name: Tag a new version
+    outputs:
+      tagged: ${{ steps.push.outputs.tagged }}
+      version: ${{ steps.version.outputs.value }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
@@ -58,6 +69,7 @@ jobs:
           echo "reading $VERSION_PATH gave $version"
 
       - name: Tag it when the version is new
+        id: push
         env:
           VERSION: ${{ steps.version.outputs.value }}
         run: |
@@ -66,6 +78,7 @@ jobs:
 
           if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
             echo "${tag} already exists, nothing to release"
+            echo "tagged=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -73,4 +86,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "${tag}" -m "${tag}"
           git push origin "${tag}"
-          echo "pushed ${tag}, which starts the release workflow"
+          echo "tagged=true" >> "$GITHUB_OUTPUT"
+          echo "pushed ${tag}"
