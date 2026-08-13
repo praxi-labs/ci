@@ -18,6 +18,12 @@ on:
           lockfile link resolves.
         type: string
         default: ''
+      environment:
+        description: >-
+          Deployment environment guarding the release. Attach a required
+          reviewer to it so the major alias cannot move without approval.
+        type: string
+        default: release
       timeout-minutes:
         type: number
         default: 15
@@ -29,6 +35,7 @@ jobs:
     name: Tag and release
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
+    environment: ${{ inputs.environment }}
     permissions:
       contents: write
     steps:

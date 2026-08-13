@@ -26,6 +26,12 @@ on:
         description: Build and validate the vsix without publishing it.
         type: boolean
         default: false
+      environment:
+        description: >-
+          Deployment environment guarding the publish. Attach a required
+          reviewer to it so a release cannot be cut without human approval.
+        type: string
+        default: release
       timeout-minutes:
         type: number
         default: 15
@@ -44,6 +50,7 @@ jobs:
     name: Publish
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
+    environment: ${{ inputs.environment }}
     permissions:
       contents: read
     defaults:
